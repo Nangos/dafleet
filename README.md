@@ -2,6 +2,8 @@
 
 Just a project for fun...
 
+All problem solutions starting from `0001` are fully verified in `Dafny 4.3.0.0`.
+
 ## Logistics
 
 So far, Dafny is the program verification tool of the "most fun" in my personal opinion.
