@@ -104,7 +104,9 @@ method lengthOfLongestSubstring'(s: string) returns (n: int, ghost best_iv: inte
   var char_to_index: map<char, int> := map[];  // records the "most recent" index of a given char
   n, best_iv := 0, (0, 0);        
 
-  while hi < |s| && |s| - lo > n  // once |s| - lo <= n, there will be no more chance, so early-terminate
+  // Once |s| - lo <= n, there will be no more chance, so early-terminate:
+  while |s| - lo > n                    /* (C) */
+  // while hi < |s| && |s| - lo > n     /* (D) */
     decreases |s| - hi
     invariant 0 <= lo <= hi <= |s|
     invariant valid_interval(s, (lo, hi))
@@ -128,3 +130,7 @@ method lengthOfLongestSubstring'(s: string) returns (n: int, ghost best_iv: inte
     }
   }
 }
+
+// Bonus Question:
+//   "Why can we safely use (C) instead of (D) as the loop condition? Won't `hi` go out-of-bound?"
+// Can you figure it out?
