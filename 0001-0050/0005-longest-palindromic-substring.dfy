@@ -8,50 +8,27 @@ Explanation: "aba" is also a valid answer.
 */
 
 
-// Specifying the problem: whether `s` is palindromic
-ghost predicate palindromic(s: string) {
-  |s| < 2 || (s[0] == s[|s|-1] && palindromic(s[1 .. |s|-1]))
-}
-
-// Some helper lemmas...
-// Yet another "common sense" that Dafny doesn't know...
-lemma lemma_nested_slicing<T>(s: seq<T>, i: nat, j: nat, i': nat, j': nat)
+// Specifying the problem: whether `s[i..j]` is palindromic
+ghost predicate palindromic(s: string, i: int, j: int)
   requires 0 <= i <= j <= |s|
-  requires 0 <= i' <= j' <= j - i
-  ensures s[i..j][i'..j'] == s[i+i' .. i+j']
-  decreases j' - i'
+  decreases j - i
 {
-  if i' < j' {
-    lemma_nested_slicing(s, i, j, i'+1, j');
-  }
+  j - i < 2 || (s[i] == s[j-1] && palindromic(s, i+1, j-1))
 }
 
-// More "common sense" about palindromes:
-lemma lemma_palindromic_expanding(s: string, lo: int, hi: int)
-  requires 0 <= lo - 1 && lo <= hi < |s| && s[lo - 1] == s[hi]
-  requires palindromic(s[lo..hi])
-  ensures palindromic(s[lo-1 .. hi+1])
-{
-  var s' := s[lo-1 .. hi+1];
-  assert s'[1 .. |s'|-1] == s[lo .. hi] by {
-    lemma_nested_slicing(s, lo-1, hi+1, 1, |s'|-1);
-  }
-}
+// A "common sense" about palindromes:
 lemma lemma_palindromic_contains(s: string, lo: int, hi: int, lo': int, hi': int)
   requires 0 <= lo <= lo' <= hi' <= hi <= |s|
   requires lo + hi == lo' + hi'
-  requires palindromic(s[lo..hi])
-  ensures palindromic(s[lo'..hi'])
+  requires palindromic(s, lo, hi)
+  ensures palindromic(s, lo', hi')
 {
   var i, j := lo, hi;
   while i < lo'
     invariant i <= lo'
     invariant i + j == lo' + hi'
-    invariant palindromic(s[i..j])
+    invariant palindromic(s, i, j)
   {
-    assert s[i..j][1 .. j-i-1] == s[i+1 .. j-1] by {
-      lemma_nested_slicing(s, i, j, 1, j-i-1);
-    }
     i, j := i + 1, j - 1;
   }
 }
@@ -59,9 +36,9 @@ lemma lemma_palindromic_contains(s: string, lo: int, hi: int, lo': int, hi': int
 // A useful "helper function" that returns the longest palindrome at a given center (i0, j0).
 method expand_from_center(s: string, i0: int, j0: int) returns (lo: int, hi: int)
   requires 0 <= i0 <= j0 <= |s|
-  requires palindromic(s[i0..j0])
-  ensures 0 <= lo <= hi <= |s| && palindromic(s[lo..hi])
-  ensures forall i, j | 0 <= i <= j <= |s| && palindromic(s[i..j])  // Among all palindromes
+  requires palindromic(s, i0, j0)
+  ensures 0 <= lo <= hi <= |s| && palindromic(s, lo, hi)
+  ensures forall i, j | 0 <= i <= j <= |s| && palindromic(s, i, j)  // Among all palindromes
     && i + j == i0 + j0                                             // sharing the same center,
     :: j - i <= hi - lo                                             // `s[lo..hi]` is longest.
 {
@@ -70,15 +47,14 @@ method expand_from_center(s: string, i0: int, j0: int) returns (lo: int, hi: int
   // we try expanding whenever possible:
   while lo - 1 >= 0 && hi < |s| && s[lo - 1] == s[hi]
     invariant 0 <= lo <= hi <= |s| && lo + hi == i0 + j0
-    invariant palindromic(s[lo..hi])
+    invariant palindromic(s, lo, hi)
   {
-    lemma_palindromic_expanding(s, lo, hi);
     lo, hi := lo - 1, hi + 1;
   }
 
   // proves that we cannot go further:
-  forall i, j | 0 <= i <= j <= |s| && i + j == i0 + j0 && j - i > hi - lo ensures !palindromic(s[i..j]) {
-    if palindromic(s[i..j]) { // prove by contradiction:
+  forall i, j | 0 <= i <= j <= |s| && i + j == i0 + j0 && j - i > hi - lo ensures !palindromic(s, i, j) {
+    if palindromic(s, i, j) { // prove by contradiction:
       lemma_palindromic_contains(s, i, j, lo - 1, hi + 1);
     }
   }
@@ -89,14 +65,14 @@ method expand_from_center(s: string, i0: int, j0: int) returns (lo: int, hi: int
 // We traverse all centers from left to right, and "expand" each of them, to find the longest palindrome.
 method longestPalindrome(s: string) returns (ans: string, lo: int, hi: int)
   ensures 0 <= lo <= hi <= |s| && ans == s[lo..hi]  // `ans` is indeed a substring in `s`
-  ensures palindromic(ans)  // `ans` is palindromic
-  ensures forall i, j | 0 <= i <= j <= |s| && palindromic(s[i..j]) :: j - i <= hi - lo  // `ans` is longest
+  ensures palindromic(s, lo, hi)  // `ans` is palindromic
+  ensures forall i, j | 0 <= i <= j <= |s| && palindromic(s, i, j) :: j - i <= hi - lo  // `ans` is longest
 {
   lo, hi := 0, 0;
   for k := 0 to |s|
     invariant 0 <= lo <= hi <= |s|
-    invariant palindromic(s[lo..hi])
-    invariant forall i, j | 0 <= i <= j <= |s| && i + j < 2 * k && palindromic(s[i..j]) :: j - i <= hi - lo
+    invariant palindromic(s, lo, hi)
+    invariant forall i, j | 0 <= i <= j <= |s| && i + j < 2 * k && palindromic(s, i, j) :: j - i <= hi - lo
   {
     var a, b := expand_from_center(s, k, k);
     if b - a > hi - lo {
@@ -112,14 +88,12 @@ method longestPalindrome(s: string) returns (ans: string, lo: int, hi: int)
 
 
 /* Discussions
-1. This is yet another evidence that Dafny is generally smart, but can stuck at some "common senses"...
-  We know Dafny is bad at slicing, but this time it was super bad.
-  It didn't know that `s[i..j][i'..j'] == s[i+i' .. i+j']` even if we `assert` it,
-  so we needed a lemma applying induction to prove it.
+1. Dafny is super bad at slicing (esp. nested slicing).
+  Do circumvent it whenever possible. It can save you a lot of assertions & lemmas!
 
-  Otherwise, everything else went smoothly as expected.
-  The verification experience largely depends on how well you know the weakness of Dafny,
-  and how quickly you can "wire your mind" to "teach" it with a proof (usually by induction).
+  For example, instead of `palindromic(s[i..j])`, use the pattern `palindromic(s, i, j)` instead.
+  I didn't realize this (ref: https://github.com/Nangos/dafleet/commit/3302ddd7642240ff2b2f6a8c51e8becd5c9b6437),
+  Resulting in a couple of clumsy lemmas.
 
 2. Bonus -- Manacher's algorithm
   Our above solution needs `O(|s|^2)` time in the worst case. Can we improve it? Yes.
@@ -146,8 +120,8 @@ method longestPalindrome(s: string) returns (ans: string, lo: int, hi: int)
 // (Ref. https://en.wikipedia.org/wiki/Longest_palindromic_substring#Manacher's_algorithm) for details...
 method {:vcs_split_on_every_assert} longestPalindrome'(s: string) returns (ans: string, lo: int, hi: int)
   ensures 0 <= lo <= hi <= |s| && ans == s[lo..hi]
-  ensures palindromic(ans)
-  ensures forall i, j | 0 <= i <= j <= |s| && palindromic(s[i..j]) :: j - i <= hi - lo
+  ensures palindromic(s, lo, hi)
+  ensures forall i, j | 0 <= i <= j <= |s| && palindromic(s, i, j) :: j - i <= hi - lo
 {
   var bogus: char :| true;  // an arbitrary character
   var s' := insert_bogus_chars(s, bogus);
@@ -274,7 +248,7 @@ ghost predicate inbound_radius(s': string, c: int, r: int)
 ghost predicate palindromic_radius(s': string, c: int, r: int)
   requires inbound_radius(s', c, r)
 {
-  palindromic(s'[c-r .. c+r+1])
+  palindromic(s', c-r, c+r+1)
 }
 
 // Whether `r` is the maximal palindromic radius at center `c`.
@@ -293,5 +267,5 @@ lemma lemma_result_transfer(s: string, s': string, bogus: char, radii: array<int
   requires (c, r) == argmax(radii, 0)
   requires lo == (c - r) / 2 && hi == (c + r) / 2
   ensures 0 <= lo <= hi <= |s|
-  ensures palindromic(s[lo..hi])
-  ensures forall i, j | 0 <= i <= j <= |s| && palindromic(s[i..j]) :: j - i <= hi - lo
+  ensures palindromic(s, lo, hi)
+  ensures forall i, j | 0 <= i <= j <= |s| && palindromic(s, i, j) :: j - i <= hi - lo
