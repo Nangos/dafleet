@@ -22,14 +22,10 @@ lemma lemma_palindromic_contains(s: string, lo: int, hi: int, lo': int, hi': int
   requires lo + hi == lo' + hi'
   requires palindromic(s, lo, hi)
   ensures palindromic(s, lo', hi')
+  decreases lo' - lo
 {
-  var i, j := lo, hi;
-  while i < lo'
-    invariant i <= lo'
-    invariant i + j == lo' + hi'
-    invariant palindromic(s, i, j)
-  {
-    i, j := i + 1, j - 1;
+  if lo < lo' {
+    lemma_palindromic_contains(s, lo + 1, hi - 1, lo', hi');
   }
 }
 
@@ -148,14 +144,9 @@ method {:vcs_split_on_every_assert} longestPalindrome'(s: string) returns (ans: 
       invariant loop_counter_inner1 <= center + radius
     {
       loop_counter_inner1 := loop_counter_inner1 + 1;
-      assert inbound_radius(s', center, radius + 1) && palindromic_radius(s', center, radius + 1) by {
-        assume false;
-      }
       radius := radius + 1;
     }
-    assert max_radius(s', center, radius) by {
-      assume false;
-    }
+    lemma_end_of_expansion(s', center, radius);
 
     radii[center] := radius;
     var old_center, old_radius := center, radius;
@@ -173,24 +164,15 @@ method {:vcs_split_on_every_assert} longestPalindrome'(s: string) returns (ans: 
 
       var mirrored_center := old_center - (center - old_center);
       var max_mirrored_radius := old_center + old_radius - center;
+      lemma_mirrored_palindrome(s', old_center, old_radius, mirrored_center, radii[mirrored_center], center);
+
       if radii[mirrored_center] < max_mirrored_radius {
-        assert max_radius(s', center, radii[mirrored_center]) by {
-          assume false;
-        }
         radii[center] := radii[mirrored_center];
         center := center + 1;
-        assert forall c | 0 <= c < center :: max_radius(s', c, radii[c]);
       } else if radii[mirrored_center] > max_mirrored_radius {
-        assert max_radius(s', center, max_mirrored_radius) by {
-          assume false;
-        }
         radii[center] := max_mirrored_radius;
         center := center + 1;
-        assert forall c | 0 <= c < center :: max_radius(s', c, radii[c]);
       } else {
-        assert palindromic_radius(s', center, max_mirrored_radius) by {
-          assume false;
-        }
         radius := max_mirrored_radius;
         break;
       }
@@ -214,13 +196,18 @@ method {:vcs_split_on_every_assert} longestPalindrome'(s: string) returns (ans: 
 
 // Inserts bogus characters to the original string (e.g. from `abc` to `|a|b|c|`).
 // Note that this is neither efficient nor necessary in reality, but just for the ease of understanding.
-function insert_bogus_chars(s: string, bogus: char): (s': string)
+function {:opaque} insert_bogus_chars(s: string, bogus: char): (s': string)
   ensures |s'| == 2 * |s| + 1
+  ensures forall i | 0 <= i <= |s| :: s'[i * 2] == bogus
+  ensures forall i | 0 <= i < |s| :: s'[i * 2 + 1] == s[i]
 {
   if s == "" then
     [bogus]
   else
-    [bogus] + [s[0]] + insert_bogus_chars(s[1..], bogus)
+    var s'_old := insert_bogus_chars(s[1..], bogus);
+    var s'_new := [bogus] + [s[0]] + s'_old;
+    assert forall i | 1 <= i <= |s| :: s'_new[i * 2] == s'_old[(i-1) * 2];
+    s'_new
 }
 
 // Returns (max_index, max_value) of array `a` starting from index `start`.
@@ -259,6 +246,82 @@ ghost predicate max_radius(s': string, c: int, r: int)
   && (forall r' | r' > r && inbound_radius(s', c, r') :: !palindromic_radius(s', c, r'))
 }
 
+// Basically, just "rephrasing" the `lemma_palindromic_contains`,
+// talking about center and radius, instead of interval
+lemma lemma_palindromic_radius_contains(s': string, c: int, r: int, r': int)
+  requires inbound_radius(s', c, r) && palindromic_radius(s', c, r)
+  requires 0 <= r' <= r
+  ensures inbound_radius(s', c, r') && palindromic_radius(s', c, r')
+{
+  lemma_palindromic_contains(s', c-r, c+r+1, c-r', c+r'+1);
+}
+
+// When "expand from center" ends, we've find the max radius:
+lemma lemma_end_of_expansion(s': string, c: int, r: int)
+  requires inbound_radius(s', c, r) && palindromic_radius(s', c, r)
+  requires inbound_radius(s', c, r + 1) ==> s'[c - (r + 1)] != s'[c + (r + 1)]
+  ensures max_radius(s', c, r)
+{
+  forall r' | r' > r && inbound_radius(s', c, r') ensures !palindromic_radius(s', c, r') {
+    if palindromic_radius(s', c, r') {  // proof by contradiction
+      lemma_palindromic_radius_contains(s', c, r', r+1);
+    }
+  }
+}
+
+// The critical insight behind Manacher's algorithm.
+//
+// Given the longest palindrome centered at `c` has length `r`, consider the interval from `c-r` to `c+r`.
+// Consider a pair of centers in the interval: `c1` (left half) and `c2` (right half), equally away from `c`.
+// Then, the length of longest palindromes at `c1` and `c2` are related as follows:
+lemma lemma_mirrored_palindrome(s': string, c: int, r: int, c1: int, r1: int, c2: int)
+  requires max_radius(s', c, r) && max_radius(s', c1, r1)
+  requires c - r <= c1 < c < c2 <= c + r
+  requires c2 - c == c - c1
+  ensures c2 + r1 < c + r ==> max_radius(s', c2, r1)
+  ensures c2 + r1 > c + r ==> max_radius(s', c2, c + r - c2)
+  ensures c2 + r1 == c + r ==> palindromic_radius(s', c2, c + r - c2)
+{
+  // proof looks long, but is quite straightforward at each step:
+  if c2 + r1 < c + r {
+    for r2 := 0 to r1
+      invariant palindromic_radius(s', c2, r2)
+    {
+      var r2' := r2 + 1;
+      assert s'[c1+r2'] == s'[c2-r2'] by { lemma_palindromic_radius_contains(s', c, r, abs(c - c1 - r2')); }
+      assert s'[c1-r2'] == s'[c2+r2'] by { lemma_palindromic_radius_contains(s', c, r, abs(c - c1 + r2')); }
+      assert s'[c1-r2'] == s'[c1+r2'] by { lemma_palindromic_radius_contains(s', c1, r1, r2'); }
+    }
+    var r2' := r1 + 1;
+    assert s'[c1+r2'] == s'[c2-r2'] by { lemma_palindromic_radius_contains(s', c, r, abs(c - c1 - r2')); }
+    assert s'[c1-r2'] == s'[c2+r2'] by { lemma_palindromic_radius_contains(s', c, r, abs(c - c1 + r2')); }
+    assert s'[c1-r2'] != s'[c1+r2'] by { assert !palindromic_radius(s', c1, r2'); }
+    lemma_end_of_expansion(s', c2, r1);
+  } else {
+    for r2 := 0 to c + r - c2
+      invariant palindromic_radius(s', c2, r2)
+    {
+      var r2' := r2 + 1;
+      assert s'[c1+r2'] == s'[c2-r2'] by { lemma_palindromic_radius_contains(s', c, r, abs(c - c1 - r2')); }
+      assert s'[c1-r2'] == s'[c2+r2'] by { lemma_palindromic_radius_contains(s', c, r, abs(c - c1 + r2')); }
+      assert s'[c1-r2'] == s'[c1+r2'] by { lemma_palindromic_radius_contains(s', c1, r1, r2'); }
+    }
+    if c2 + r1 > c + r {
+      var r2' := (c + r - c2) + 1;
+      if inbound_radius(s', c, r + 1) {
+        assert s'[c1+r2'] == s'[c2-r2'] by { lemma_palindromic_radius_contains(s', c, r, abs(c - c1 - r2')); }
+        assert s'[c1-r2'] != s'[c2+r2'] by { assert !palindromic_radius(s', c, r + 1); }
+        assert s'[c1-r2'] == s'[c1+r2'] by { lemma_palindromic_radius_contains(s', c1, r1, r2'); }
+        lemma_end_of_expansion(s', c2, c + r - c2);
+      }
+    }
+  }
+}
+//, where:
+ghost function abs(x: int): int {
+  if x >= 0 then x else -x
+}
+
 // Transfering our final result on `s'` to that on `s`:
 lemma lemma_result_transfer(s: string, s': string, bogus: char, radii: array<int>, c: int, r: int, hi: int, lo: int)
   requires s' == insert_bogus_chars(s, bogus)
@@ -269,3 +332,85 @@ lemma lemma_result_transfer(s: string, s': string, bogus: char, radii: array<int
   ensures 0 <= lo <= hi <= |s|
   ensures palindromic(s, lo, hi)
   ensures forall i, j | 0 <= i <= j <= |s| && palindromic(s, i, j) :: j - i <= hi - lo
+{
+  // For each center, rephrase [maximal radius in `s'`] into [maximal interval in `s`]:
+  forall k | 0 <= k < radii.Length
+  ensures max_interval_for_same_center(s, k, (k - radii[k]) / 2, (k + radii[k]) / 2) {
+    // We need to show `k` and `radii[k]` are either "both odd" or "both even". We prove by contradiction:
+    if (k + radii[k]) % 2 == 1 {
+      lemma_palindrome_bogus(s, s', bogus, k, radii[k]);
+    }
+    // We then relate `s` and `s'` using their "isomorphism":
+    var lo, hi := (k - radii[k]) / 2, (k + radii[k]) / 2;
+    lemma_palindrome_isomorph(s, s', bogus, lo, hi);
+    forall i, j | 0 <= i <= j <= |s| && i + j == k && j - i > radii[k] ensures !palindromic(s, i, j) {
+      lemma_palindrome_isomorph(s, s', bogus, i, j);
+    }
+  }
+
+  // We then iteratively build the last post-condition: 
+  for k := 0 to radii.Length - 1
+    invariant forall i, j | 0 <= i <= j <= |s| && palindromic(s, i, j) && i + j <= k :: j - i <= hi - lo
+  {
+    forall i, j | 0 <= i <= j <= |s| && palindromic(s, i, j) && i + j == k + 1 ensures j - i <= hi - lo {
+      var k := k + 1;
+      assert max_interval_for_same_center(s, k, (k - radii[k]) / 2, (k + radii[k]) / 2);
+    }
+  }
+}
+
+// The following returns whether `s[lo..hi]` is the longest palindrome s.t. `lo + hi == k`:
+ghost predicate max_interval_for_same_center(s: string, k: int, lo: int, hi: int) {
+  && 0 <= lo <= hi <= |s|
+  && lo + hi == k
+  && palindromic(s, lo, hi)
+  && (forall i, j | 0 <= i <= j <= |s| && palindromic(s, i, j) && i + j == k :: j - i <= hi - lo)
+}
+
+// Establishes the "palindromic isomorphism" between `s` and `s'`.
+lemma lemma_palindrome_isomorph(s: string, s': string, bogus: char, lo: int, hi: int)
+  requires s' == insert_bogus_chars(s, bogus)
+  requires 0 <= lo <= hi <= |s| 
+  ensures palindromic(s, lo, hi) <==> palindromic_radius(s', lo + hi, hi - lo)
+{
+  if palindromic(s, lo, hi) {  // ==>
+    for r := 0 to hi - lo
+      invariant palindromic_radius(s', lo + hi, r)
+    {
+      if (lo + hi - r) % 2 == 1 {
+        lemma_palindrome_bogus(s, s', bogus, lo + hi, r);
+      } else {  
+        var i', j' := lo + hi - (r + 1), lo + hi + (r + 1);
+        var i, j := i' / 2, j' / 2;
+        assert s[i] == s[j] by { lemma_palindromic_contains(s, lo, hi, i, j + 1); }
+        // Notice that `s'[i'] == s[i] && s'[j'] == s[j]`; apparently Dafny does
+      }
+    }
+  }
+  if palindromic_radius(s', lo + hi, hi - lo) {  // <==
+    var lo', hi' := lo, hi;
+    while lo' + 1 <= hi' - 1
+      invariant lo <= lo' <= hi' <= hi
+      invariant lo' + hi' == lo + hi
+      invariant palindromic_radius(s', lo + hi, hi' - lo')
+      invariant palindromic(s, lo', hi') ==> palindromic(s, lo, hi)  // "reversed construction"
+    {
+      assert palindromic_radius(s', lo + hi, hi' - lo' - 1);  // ignore bogus chars and move on
+      lo', hi' := lo' + 1, hi' - 1;
+    }
+  }
+}
+
+// Implies that whenever `c + r` is odd, the corresponding palindrome can be "lengthened for free"
+// because its both ends are the bogus char.
+lemma lemma_palindrome_bogus(s: string, s': string, bogus: char, c: int, r: int)
+  requires s' == insert_bogus_chars(s, bogus)
+  requires inbound_radius(s', c, r) && palindromic_radius(s', c, r)
+  requires (c + r) % 2 == 1
+  ensures inbound_radius(s', c, r + 1) && palindromic_radius(s', c, r + 1)
+{
+  var left, right := c - (r + 1), c + (r + 1);
+  assert left == (left / 2) * 2;
+  assert right == (right / 2) * 2;
+  assert s'[left] == s'[right] == bogus;
+}
